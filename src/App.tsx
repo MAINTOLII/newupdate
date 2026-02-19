@@ -3,27 +3,13 @@ import Credits from "./Credits";
 import Reports from "./Reports";
 import Sales from "./Sales";
 import Logbook from "./Logbook.tsx";
-import type { Sale, CreditAccount } from "./types";
+import type { CreditAccount } from "./types";
 
 
 function App() {
   const [page, setPage] = useState<"sales" | "reports" | "credits" | "logbook">("sales");
-  const [sales, setSales] = useState<Sale[]>([]);
   const [credits, setCredits] = useState<CreditAccount[]>([]);
-  const [logEntries, setLogEntries] = useState<
-    { id: number; text: string; date: string }[]
-  >([]);
-
-  const addPayment = (phone: string, amount: number) => {
-    if (!amount) return;
-    setCredits((prev) =>
-      prev.map((c) =>
-        c.phone === phone
-          ? { ...c, payments: [...c.payments, amount] }
-          : c
-      )
-    );
-  };
+  const [, setSales] = useState<any[]>([]);
 
   const addManualCredit = (phone: string, amount: number, note: string) => {
     if (!amount) return;
@@ -89,23 +75,22 @@ function App() {
       </div>
 
       {page === "sales" && (
-        <Sales setSales={setSales} setCredits={setCredits} />
+        <Sales setSales={setSales} />
       )}
 
       {page === "reports" && (
-        <Reports sales={sales} credits={credits} />
+        <Reports />
       )}
 
       {page === "credits" && (
         <Credits
           credits={credits}
-          addPayment={addPayment}
           addManualCredit={addManualCredit}
         />
       )}
 
       {page === "logbook" && (
-        <Logbook entries={logEntries} setEntries={setLogEntries} />
+        <Logbook />
       )}
     </div>
   );

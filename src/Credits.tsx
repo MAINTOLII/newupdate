@@ -4,13 +4,11 @@ import type { CreditAccount } from "./types";
 type Props = {
   credits: CreditAccount[];
   addManualCredit: (phone: string, amount: number, note: string) => void;
-  addPayment: (phone: string, amount: number) => void;
 };
 
 export default function Credits({
   credits,
   addManualCredit,
-  addPayment,
 }: Props) {
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("");

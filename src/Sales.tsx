@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
-import type { Sale, CreditAccount } from "./types";
+import type { Sale } from "./types";
 
 type Product = {
   id: string;
@@ -22,10 +22,9 @@ type CartItem = {
 
 type Props = {
   setSales: React.Dispatch<React.SetStateAction<Sale[]>>;
-  setCredits: React.Dispatch<React.SetStateAction<CreditAccount[]>>;
 };
 
-export default function Sales({ setSales, setCredits }: Props) {
+export default function Sales({ setSales }: Props) {
   const [products, setProducts] = useState<Product[]>([]);
   const [customers, setCustomers] = useState<
     { id: number; name: string | null; phone: number }[]

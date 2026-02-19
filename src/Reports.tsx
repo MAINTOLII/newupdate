@@ -28,7 +28,6 @@ type CreditAccount = {
   manualCredits: { amount: number; note: string; date: string }[];
 };
 
-type Props = {};
 
 export default function Reports() {
   const [sales, setSales] = useState<Sale[]>([]);
@@ -81,32 +80,7 @@ export default function Reports() {
     .filter((sale) => sale.type === "shs")
     .reduce((sum, sale) => sum + (sale.shsAmount || 0), 0);
 
-  const totalCreditSales = sales
-    .filter((sale) => sale.type === "credit")
-    .reduce((sum, sale) => sum + sale.total, 0);
 
-  const totalManualCredits = credits.reduce(
-    (sum, account) =>
-      sum +
-      (account.manualCredits || []).reduce(
-        (mSum, m) => mSum + m.amount,
-        0
-      ),
-    0
-  );
-
-  const totalCreditPayments = payments.reduce(
-    (sum, p) => sum + Number(p.amount),
-    0
-  );
-
-  const totalCreditsGivenOut =
-    totalCreditSales + totalManualCredits;
-
-  const expectedCashDrawer =
-    totalCashSales + totalCreditPayments;
-
-  const expectedShsDrawer = totalShsSales;
 
   const totalProfit = sales.reduce(
     (sum, sale) => sum + sale.profit,
@@ -123,20 +97,6 @@ export default function Reports() {
     return saleWithName?.customer || null;
   };
 
-  const productCounts: Record<string, number> = {};
-
-  sales.forEach((sale) => {
-    sale.items.forEach((item) => {
-      if (!productCounts[item.name]) {
-        productCounts[item.name] = 0;
-      }
-      productCounts[item.name] += item.quantity;
-    });
-  });
-
-  const topProducts = Object.entries(productCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 5);
 
   return (
     <>
