@@ -2,13 +2,17 @@ import { useState } from "react";
 import Credits from "./Credits";
 import Reports from "./Reports";
 import Sales from "./Sales";
+import Logbook from "./Logbook.tsx";
 import type { Sale, CreditAccount } from "./types";
 
 
 function App() {
-  const [page, setPage] = useState<"sales" | "reports" | "credits">("sales");
+  const [page, setPage] = useState<"sales" | "reports" | "credits" | "logbook">("sales");
   const [sales, setSales] = useState<Sale[]>([]);
   const [credits, setCredits] = useState<CreditAccount[]>([]);
+  const [logEntries, setLogEntries] = useState<
+    { id: number; text: string; date: string }[]
+  >([]);
 
   const addPayment = (phone: string, amount: number) => {
     if (!amount) return;
@@ -81,6 +85,7 @@ function App() {
         <button onClick={() => setPage("sales")}>Sales</button>
         <button onClick={() => setPage("reports")}>Reports</button>
         <button onClick={() => setPage("credits")}>Credits</button>
+        <button onClick={() => setPage("logbook")}>Logbook</button>
       </div>
 
       {page === "sales" && (
@@ -97,6 +102,10 @@ function App() {
           addPayment={addPayment}
           addManualCredit={addManualCredit}
         />
+      )}
+
+      {page === "logbook" && (
+        <Logbook entries={logEntries} setEntries={setLogEntries} />
       )}
     </div>
   );

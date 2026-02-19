@@ -1,17 +1,18 @@
-import { useState } from "react";
-
+import { useState, useEffect } from "react";
+import { supabase } from "./supabase";
 import type { Sale, CreditAccount } from "./types";
 
 type Product = {
-  id: number;
-  name: string;
-  price: number;
+  id: string;
+  slug: string;
+  qty: number;
   cost: number;
-  unit: "piece" | "kg";
+  price: number;
+  is_weight: boolean;
 };
 
 type CartItem = {
-  id: number;
+  id: string;
   name: string;
   price: number;
   cost: number;
@@ -24,106 +25,125 @@ type Props = {
   setCredits: React.Dispatch<React.SetStateAction<CreditAccount[]>>;
 };
 
-export default function Sales({
-  setSales,
-  setCredits,
-}: Props) {
-  const [products] = useState<Product[]>([
-    { id: 1, name: "Ice Bag", price: 0.3, cost: 0.15, unit: "piece" },
-    { id: 2, name: "Soap", price: 1, cost: 0.6, unit: "piece" },
-    { id: 3, name: "Banana (kg)", price: 2.5, cost: 1.8, unit: "kg" },
-    { id: 4, name: "Raisins (kg)", price: 4, cost: 3, unit: "kg" },
-  ]);
-
+export default function Sales({ setSales, setCredits }: Props) {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [customers, setCustomers] = useState<
+    { id: number; name: string | null; phone: number }[]
+  >([]);
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [customerInput, setCustomerInput] = useState("");
+  const [lineTotals, setLineTotals] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      const { data } = await supabase.from("products").select("*");
+      if (data) {
+        setProducts(
+          data.map((p: any) => ({
+            id: p.id,
+            slug: p.slug,
+            qty: Number(p.qty),
+            cost: Number(p.cost),
+            price: Number(p.price),
+            is_weight: p.is_weight,
+          }))
+        );
+      }
+    };
+
+    const fetchCustomers = async () => {
+      const { data } = await supabase.from("customers").select("*");
+      if (data) setCustomers(data);
+    };
+
+    fetchProducts();
+    fetchCustomers();
+  }, []);
 
   const filteredProducts =
     search.length >= 2
       ? products.filter((p) =>
-          p.name.toLowerCase().includes(search.toLowerCase())
+          p.slug.toLowerCase().includes(search.toLowerCase())
         )
+      : [];
+
+  const filteredCustomers =
+    customerInput.length >= 2
+      ? customers.filter((c) => {
+          const nameMatch =
+            c.name &&
+            c.name.toLowerCase().includes(customerInput.toLowerCase());
+          const phoneMatch = c.phone.toString().includes(customerInput);
+          return nameMatch || phoneMatch;
+        })
       : [];
 
   const addToCart = (product: Product) => {
     setCart((prev) => {
       const existing = prev.find((i) => i.id === product.id);
+      const quantityToAdd = product.is_weight ? 0.1 : 1;
+
       if (existing) {
         return prev.map((i) =>
           i.id === product.id
-            ? { ...i, quantity: i.quantity + (product.unit === "kg" ? 0.1 : 1) }
+            ? { ...i, quantity: i.quantity + quantityToAdd }
             : i
         );
       }
+
       return [
         ...prev,
         {
           id: product.id,
-          name: product.name,
+          name: product.slug,
           price: product.price,
           cost: product.cost,
-          quantity: product.unit === "kg" ? 0.1 : 1,
-          unit: product.unit,
+          quantity: quantityToAdd,
+          unit: product.is_weight ? "kg" : "piece",
         },
       ];
     });
     setSearch("");
   };
 
-  const updateQuantity = (id: number, value: string) => {
+  const updateQuantity = (id: string, value: string) => {
     setCart((prev) =>
       prev.map((i) => {
         if (i.id !== id) return i;
-
-        if (value === "") {
-          return { ...i, quantity: 0 };
-        }
-
+        if (value === "") return { ...i, quantity: 0 };
         const quantity = parseFloat(value);
         if (isNaN(quantity)) return i;
-
-        if (i.unit === "piece") {
-          return { ...i, quantity: quantity };
-        }
-
         return { ...i, quantity };
       })
     );
   };
 
-  const updatePrice = (id: number, value: string) => {
+  const updatePrice = (id: string, value: string) => {
     setCart((prev) =>
       prev.map((i) => {
         if (i.id !== id) return i;
-
-        if (value === "") {
-          return { ...i, price: 0 };
-        }
-
+        if (value === "") return { ...i, price: 0 };
         const price = parseFloat(value);
         if (isNaN(price)) return i;
-
         return { ...i, price };
       })
     );
   };
 
-  const updateLineTotal = (id: number, value: string) => {
+  const updateLineTotal = (id: string, value: string) => {
+    setLineTotals((prev) => ({ ...prev, [id]: value }));
+
     setCart((prev) =>
       prev.map((i) => {
         if (i.id !== id) return i;
-
-        if (value === "") {
-          return { ...i, price: 0 };
-        }
+        if (value === "") return { ...i, price: 0 };
 
         const lineTotal = parseFloat(value);
-        if (isNaN(lineTotal) || i.quantity === 0) return i;
+        if (isNaN(lineTotal) || i.quantity <= 0) return i;
 
         const newUnitPrice = lineTotal / i.quantity;
-
-        return { ...i, price: newUnitPrice };
+        return { ...i, price: parseFloat(newUnitPrice.toFixed(2)) };
       })
     );
   };
@@ -140,9 +160,7 @@ export default function Sales({
     shsAmount?: number
   ): Sale => ({
     id: Date.now(),
-    items: cart.map((item) => ({
-      ...item,
-    })),
+    items: cart,
     total,
     profit,
     date: new Date().toLocaleString(),
@@ -151,51 +169,101 @@ export default function Sales({
     shsAmount,
   });
 
-  const cashCheckout = () => {
-    if (!cart.length) return;
-    setSales((p) => [...p, createSale("cash", customerInput)]);
-    setCart([]);
-    setCustomerInput("");
+  const reduceStockAndSync = async () => {
+    for (const item of cart) {
+      const product = products.find((p) => p.id === item.id);
+      if (!product) continue;
+
+      const newQty = product.qty - item.quantity;
+
+      await supabase
+        .from("products")
+        .update({ qty: newQty })
+        .eq("id", item.id);
+    }
+
+    setProducts((prev) =>
+      prev.map((prod) => {
+        const soldItem = cart.find((c) => c.id === prod.id);
+        if (!soldItem) return prod;
+        return { ...prod, qty: prod.qty - soldItem.quantity };
+      })
+    );
   };
 
-  const creditCheckout = () => {
+  const cashCheckout = async () => {
     if (!cart.length) return;
-    const phone = prompt("Customer phone number:");
-    if (!phone) return;
+    const newSale = createSale("cash", customerInput);
+    await reduceStockAndSync();
 
-    const sale = createSale("credit", phone);
-    setSales((p) => [...p, sale]);
-
-    setCredits((prev) => {
-      const existing = prev.find((c) => c.phone === phone);
-      if (existing) {
-        return prev.map((c) =>
-          c.phone === phone ? { ...c, sales: [...c.sales, sale] } : c
-        );
-      }
-      return [
-        ...prev,
-        { phone, sales: [sale], payments: [], manualCredits: [] },
-      ];
+    await supabase.from("sales").insert({
+      date: newSale.date,
+      total: newSale.total,
+      profit: newSale.profit,
+      type: newSale.type,
+      customer: newSale.customer || null,
+      shs_amount: null,
+      items: newSale.items,
     });
 
+    setSales((p) => [...p, newSale]);
     setCart([]);
+    setLineTotals({});
+    setCustomerInput("");
+    alert("Transaction complete");
   };
 
-  const shsCheckout = () => {
+  const creditCheckout = async () => {
     if (!cart.length) return;
+    if (!customerInput.trim()) {
+      alert("Customer field cannot be empty.");
+      return;
+    }
 
+    const newSale = createSale("credit", customerInput);
+    await reduceStockAndSync();
+
+    await supabase.from("sales").insert({
+      date: newSale.date,
+      total: newSale.total,
+      profit: newSale.profit,
+      type: newSale.type,
+      customer: newSale.customer || null,
+      shs_amount: null,
+      items: newSale.items,
+    });
+
+    setSales((p) => [...p, newSale]);
+    setCart([]);
+    setLineTotals({});
+    setCustomerInput("");
+    alert("Credit transaction complete");
+  };
+
+  const shsCheckout = async () => {
+    if (!cart.length) return;
     const shsInput = prompt("How many Somali Shillings received?");
     if (!shsInput) return;
-
     const shsValue = parseFloat(shsInput);
     if (isNaN(shsValue)) return;
 
-    const sale = createSale("shs", undefined, shsValue);
-    setSales((p) => [...p, sale]);
+    const newSale = createSale("shs", undefined, shsValue);
+    await reduceStockAndSync();
 
+    await supabase.from("sales").insert({
+      date: newSale.date,
+      total: newSale.total,
+      profit: newSale.profit,
+      type: newSale.type,
+      customer: null,
+      shs_amount: newSale.shsAmount || null,
+      items: newSale.items,
+    });
+
+    setSales((p) => [...p, newSale]);
     setCart([]);
-    setCustomerInput("");
+    setLineTotals({});
+    alert("SHS transaction complete");
   };
 
   return (
@@ -207,22 +275,57 @@ export default function Sales({
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      <div style={{ marginBottom: 10 }}>
+        <input
+          style={{ width: "100%", marginBottom: 4 }}
+          placeholder="Customer name or phone (optional for cash)"
+          value={customerInput}
+          onChange={(e) => setCustomerInput(e.target.value)}
+        />
+
+        {filteredCustomers.length > 0 && (
+          <div
+            style={{
+              border: "1px solid #ccc",
+              background: "black",
+              color: "white",
+              maxHeight: 150,
+              overflowY: "auto",
+            }}
+          >
+            {filteredCustomers.map((c) => (
+              <div
+                key={c.id}
+                style={{ padding: 6, cursor: "pointer", color: "white" }}
+                onClick={() =>
+                  setCustomerInput(
+                    c.name ? `${c.name} (${c.phone})` : c.phone.toString()
+                  )
+                }
+              >
+                {c.name ? `${c.name} (${c.phone})` : c.phone}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {filteredProducts.map((p) => (
         <div
           key={p.id}
           onClick={() => addToCart(p)}
-          style={{ cursor: "pointer" }}
+          style={{
+            cursor: "pointer",
+            display: "flex",
+            justifyContent: "space-between",
+          }}
         >
-          {p.name} — ${p.price}
+          <span>
+            {p.slug} — ${p.price}
+          </span>
+          <span style={{ fontSize: 12, opacity: 0.6 }}>({p.qty})</span>
         </div>
       ))}
-
-      <input
-        style={{ width: "100%", marginTop: 8 }}
-        placeholder="Customer (optional)"
-        value={customerInput}
-        onChange={(e) => setCustomerInput(e.target.value)}
-      />
 
       <hr style={{ margin: "25px 0" }} />
 
@@ -236,9 +339,7 @@ export default function Sales({
                 type="number"
                 step={i.unit === "kg" ? "0.01" : "1"}
                 value={i.quantity === 0 ? "" : i.quantity}
-                onChange={(e) =>
-                  updateQuantity(i.id, e.target.value)
-                }
+                onChange={(e) => updateQuantity(i.id, e.target.value)}
                 style={{ width: 80 }}
               />
             </div>
@@ -248,9 +349,7 @@ export default function Sales({
                 type="number"
                 step="0.01"
                 value={i.price === 0 ? "" : i.price}
-                onChange={(e) =>
-                  updatePrice(i.id, e.target.value)
-                }
+                onChange={(e) => updatePrice(i.id, e.target.value)}
                 style={{ width: 90 }}
               />
             </div>
@@ -260,13 +359,13 @@ export default function Sales({
                 type="number"
                 step="0.01"
                 value={
-                  i.quantity === 0
+                  lineTotals[i.id] !== undefined
+                    ? lineTotals[i.id]
+                    : i.quantity === 0
                     ? ""
                     : (i.price * i.quantity).toFixed(2)
                 }
-                onChange={(e) =>
-                  updateLineTotal(i.id, e.target.value)
-                }
+                onChange={(e) => updateLineTotal(i.id, e.target.value)}
                 style={{ width: 100 }}
               />
             </div>

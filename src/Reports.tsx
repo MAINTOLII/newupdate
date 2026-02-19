@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { supabase } from "./supabase";
 
 type CartItem = {
   id: number;
@@ -26,12 +28,51 @@ type CreditAccount = {
   manualCredits: { amount: number; note: string; date: string }[];
 };
 
-type Props = {
-  sales: Sale[];
-  credits: CreditAccount[];
-};
+type Props = {};
 
-export default function Reports({ sales, credits }: Props) {
+export default function Reports() {
+  const [sales, setSales] = useState<Sale[]>([]);
+  const [credits, setCredits] = useState<CreditAccount[]>([]);
+  const [payments, setPayments] = useState<
+    { phone: string; amount: number }[]
+  >([]);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      const { data: salesData } = await supabase
+        .from("sales")
+        .select("*")
+        .order("date", { ascending: false });
+
+      const { data: creditsData } = await supabase
+        .from("credit_accounts")
+        .select("*");
+
+      const { data: paymentsData } = await supabase
+        .from("credit_payments2")
+        .select("phone, amount");
+
+      if (salesData) {
+        setSales(
+          salesData.map((s: any) => ({
+            ...s,
+            items: s.items || [],
+            shsAmount: s.shs_amount || 0,
+          }))
+        );
+      }
+
+      if (creditsData) {
+        setCredits(creditsData);
+      }
+
+      if (paymentsData) {
+        setPayments(paymentsData as any);
+      }
+    };
+
+    fetchData();
+  }, []);
   const totalCashSales = sales
     .filter((sale) => sale.type === "cash")
     .reduce((sum, sale) => sum + sale.total, 0);
@@ -54,9 +95,8 @@ export default function Reports({ sales, credits }: Props) {
     0
   );
 
-  const totalCreditPayments = credits.reduce(
-    (sum, account) =>
-      sum + account.payments.reduce((pSum, p) => pSum + p, 0),
+  const totalCreditPayments = payments.reduce(
+    (sum, p) => sum + Number(p.amount),
     0
   );
 
@@ -73,6 +113,31 @@ export default function Reports({ sales, credits }: Props) {
     0
   );
 
+  const getCustomerName = (phone: string) => {
+    const account = credits.find((c) => c.phone === phone);
+    if (!account) return null;
+
+    // Look through ALL sales to find a stored customer name
+    const saleWithName = account.sales.find((s) => s.customer);
+
+    return saleWithName?.customer || null;
+  };
+
+  const productCounts: Record<string, number> = {};
+
+  sales.forEach((sale) => {
+    sale.items.forEach((item) => {
+      if (!productCounts[item.name]) {
+        productCounts[item.name] = 0;
+      }
+      productCounts[item.name] += item.quantity;
+    });
+  });
+
+  const topProducts = Object.entries(productCounts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 5);
+
   return (
     <>
       <h4>Sales & Payments</h4>
@@ -81,30 +146,11 @@ export default function Reports({ sales, credits }: Props) {
         <strong>Total Profit:</strong>{" "}
         ${totalProfit.toFixed(2)}
         <br />
-        <strong>Total Cash Sales:</strong>{" "}
+        <strong>Total Revenue (Cash):</strong>{" "}
         ${totalCashSales.toFixed(2)}
         <br />
         <strong>Total SHS Revenue:</strong>{" "}
         {totalShsSales.toFixed(0)} SHS
-        <br />
-        <strong>Total Credit Sales:</strong>{" "}
-        ${totalCreditSales.toFixed(2)}
-        <br />
-        <strong>Total Manual Credits:</strong>{" "}
-        ${totalManualCredits.toFixed(2)}
-        <br />
-        <strong>Total Credits Given Out:</strong>{" "}
-        ${totalCreditsGivenOut.toFixed(2)}
-        <br />
-        <strong>Total Credit Payments:</strong>{" "}
-        ${totalCreditPayments.toFixed(2)}
-        <br />
-        <strong>Expected Cash Drawer:</strong>{" "}
-        ${expectedCashDrawer.toFixed(2)}
-        <br />
-        <strong>Expected SHS Drawer:</strong>{" "}
-        {expectedShsDrawer.toFixed(0)} SHS
-        <br />
         <hr />
       </div>
 
@@ -137,17 +183,19 @@ export default function Reports({ sales, credits }: Props) {
       <hr style={{ margin: "25px 0" }} />
 
       <h4>Credit Payments</h4>
-      {credits.flatMap((account) =>
-        account.payments.map((payment, idx) => (
+      {payments.map((payment, idx) => {
+        const name = getCustomerName(payment.phone);
+        return (
           <div
-            key={`${account.phone}-${idx}`}
+            key={`${payment.phone}-${idx}`}
             style={{ marginBottom: 6 }}
           >
-            {account.phone} paid $
-            {payment.toFixed(2)}
+            {payment.phone}
+            {name && ` (${name})`} paid $
+            {Number(payment.amount).toFixed(2)}
           </div>
-        ))
-      )}
+        );
+      })}
     </>
   );
 }
