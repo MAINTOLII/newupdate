@@ -1,55 +1,114 @@
 import { useState, useEffect } from "react";
 import { supabase } from "./supabase";
 import type { CreditAccount } from "./types";
-type Props = {
-  credits: CreditAccount[];
-  addManualCredit: (phone: string, amount: number, note: string) => void;
-};
-
-export default function Credits({
-  credits,
-  addManualCredit,
-}: Props) {
+export default function Credits() {
   const [phone, setPhone] = useState("");
   const [amount, setAmount] = useState("");
   const [note, setNote] = useState("");
   const [search, setSearch] = useState("");
   const [payments, setPayments] = useState<
-    { phone: string; amount: number }[]
+    { phone: string; amount: number; created_at: string }[]
   >([]);
+  const [credits, setCredits] = useState<CreditAccount[]>([]);
+  const [customers, setCustomers] = useState<
+    { id: number; name: string | null; phone: number }[]
+  >([]);
+  const [openAccount, setOpenAccount] = useState<string | null>(null);
 
-  const existingCustomers = credits.map((c) => ({
-    name: c.sales.find((s) => s.customer)?.customer || "",
-    phone: c.phone,
-  }));
 
   const filteredManualCustomers =
     phone.length >= 2
-      ? existingCustomers.filter(
-          (c) =>
-            c.name.toLowerCase().includes(phone.toLowerCase()) ||
-            c.phone.toString().includes(phone)
-        )
+      ? customers.filter((c) => {
+          const nameMatch =
+            c.name &&
+            c.name.toLowerCase().includes(phone.toLowerCase());
+          const phoneMatch = c.phone.toString().includes(phone);
+          return nameMatch || phoneMatch;
+        })
       : [];
-
-  // Persist credits to localStorage whenever they change
   useEffect(() => {
-    localStorage.setItem("pos_credit_accounts", JSON.stringify(credits));
-  }, [credits]);
+    const fetchCustomers = async () => {
+      const { data, error } = await supabase
+        .from("customers")
+        .select("id, name, phone");
 
-  // Load persisted credits on first render (if parent allows hydration)
-  useEffect(() => {
-    const stored = localStorage.getItem("pos_credit_accounts");
-    if (!stored) return;
-    // Parent component should ideally hydrate from this.
-    // This is just ensuring persistence exists.
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      if (data) setCustomers(data as any);
+    };
+
+    fetchCustomers();
   }, []);
+  const extractPhone = (value: string) => {
+    if (!value) return value;
+    const match = value.match(/\((\d+)\)/);
+    if (match) return match[1];
+    return value.trim();
+  };
+
+  useEffect(() => {
+    const fetchCredits = async () => {
+      const { data, error } = await supabase
+        .from("sales")
+        .select("*")
+        .eq("type", "credit");
+
+      if (error) {
+        console.error(error);
+        return;
+      }
+
+      if (data) {
+        const grouped: Record<string, CreditAccount> = {};
+
+        data.forEach((sale: any) => {
+          if (!sale.customer) return;
+
+          const cleanPhone = extractPhone(sale.customer);
+
+          if (!grouped[cleanPhone]) {
+            grouped[cleanPhone] = {
+              phone: cleanPhone,
+              sales: [],
+              payments: [],
+              manualCredits: [],
+            };
+          }
+
+          if (sale.items && sale.items.length === 0) {
+            grouped[cleanPhone].manualCredits.push({
+              amount: Number(sale.total),
+              note: sale.note || "",
+              date: sale.date,
+            });
+          } else {
+            grouped[cleanPhone].sales.push({
+              id: sale.id,
+              items: sale.items || [],
+              total: Number(sale.total),
+              profit: Number(sale.profit),
+              date: sale.date,
+              type: sale.type,
+              customer: cleanPhone,
+            });
+          }
+        });
+
+        setCredits(Object.values(grouped));
+      }
+    };
+
+    fetchCredits();
+  }, [payments]);
 
   useEffect(() => {
     const fetchPayments = async () => {
       const { data, error } = await supabase
         .from("credit_payments2")
-        .select("phone, amount");
+        .select("phone, amount, created_at");
 
       if (error) {
         console.error(error);
@@ -99,10 +158,14 @@ export default function Credits({
                   borderBottom: "1px solid #f2f2f2",
                 }}
                 onClick={() => {
-                  setPhone(c.phone.toString());
+                  if (c.name) {
+                    setPhone(`${c.name} (${c.phone})`);
+                  } else {
+                    setPhone(c.phone.toString());
+                  }
                 }}
               >
-                {c.name ? `${c.name} (${c.phone})` : c.phone}
+                {c.name ? `${c.name} (${c.phone})` : c.phone.toString()}
               </div>
             ))}
           </div>
@@ -121,14 +184,76 @@ export default function Credits({
           style={{ marginRight: 5, backgroundColor: "white", color: "black" }}
         />
         <button
-          onClick={() => {
+          onClick={async () => {
             if (!phone || !amount || isNaN(parseFloat(amount))) return;
 
-            addManualCredit(phone, parseFloat(amount), note);
+            const value = parseFloat(amount);
+
+            const { error } = await supabase
+              .from("sales")
+              .insert({
+                date: new Date().toLocaleString(),
+                total: value,
+                profit: 0,
+                type: "credit",
+                customer: extractPhone(phone),
+                items: [],
+                note: note || null,
+              });
+
+            if (error) {
+              console.error(error);
+              return;
+            }
 
             setPhone("");
             setAmount("");
             setNote("");
+
+            // refetch credits
+            const { data } = await supabase
+              .from("sales")
+              .select("*")
+              .eq("type", "credit");
+
+            if (data) {
+              const grouped: Record<string, CreditAccount> = {};
+
+              data.forEach((sale: any) => {
+                if (!sale.customer) return;
+
+                const cleanPhone = extractPhone(sale.customer);
+
+                if (!grouped[cleanPhone]) {
+                  grouped[cleanPhone] = {
+                    phone: cleanPhone,
+                    sales: [],
+                    payments: [],
+                    manualCredits: [],
+                  };
+                }
+
+                if (sale.items && sale.items.length === 0) {
+                  grouped[cleanPhone].manualCredits.push({
+                    amount: Number(sale.total),
+                    note: sale.note || "",
+                    date: sale.date,
+                  });
+                } else {
+                  grouped[cleanPhone].sales.push({
+                    id: sale.id,
+                    items: sale.items || [],
+                    total: Number(sale.total),
+                    profit: Number(sale.profit),
+                    date: sale.date,
+                    type: sale.type,
+                    customer: cleanPhone,
+                  });
+                }
+              });
+
+              setCredits(Object.values(grouped));
+            }
           }}
         >
           Add
@@ -158,8 +283,14 @@ export default function Credits({
 
       {credits
         .filter((account) => {
-          const name =
-            account.sales.find((s) => s.customer)?.customer || "";
+          const matchedCustomer = customers.find(
+            (c) => c.phone.toString() === account.phone.toString()
+          );
+
+          const name = matchedCustomer?.name
+            ? matchedCustomer.name.toLowerCase()
+            : "";
+
           const phoneStr = account.phone.toString();
 
           const salesTotal = account.sales.reduce(
@@ -192,9 +323,13 @@ export default function Credits({
           );
         })
         .map((account) => {
-        const displayName =
-          account.sales.find((s) => s.customer)?.customer ||
-          account.phone;
+        const matchedCustomer = customers.find(
+          (c) => c.phone.toString() === account.phone.toString()
+        );
+
+        const displayLabel = matchedCustomer?.name
+          ? `${account.phone} (${matchedCustomer.name})`
+          : account.phone;
 
         const salesTotal = account.sales.reduce(
           (sum, sale) => sum + sale.total,
@@ -218,154 +353,176 @@ export default function Credits({
           <div
             key={account.phone}
             style={{
-              marginBottom: 16,
-              padding: 12,
+              marginBottom: 8,
               backgroundColor: "#111",
               color: "white",
-              borderRadius: 8,
+              borderRadius: 6,
               border: "1px solid #222",
+              overflow: "hidden"
             }}
           >
             <div
+              onClick={() =>
+                setOpenAccount(
+                  openAccount === account.phone ? null : account.phone
+                )
+              }
               style={{
                 display: "flex",
                 justifyContent: "space-between",
                 alignItems: "center",
-                marginBottom: 4,
+                padding: "10px 12px",
+                cursor: "pointer",
+                backgroundColor: "#161616"
               }}
             >
-              <strong>
-                {displayName !== account.phone ? displayName : account.phone}
-              </strong>
-
-              {displayName !== account.phone && (
-                <span style={{ fontSize: 12, color: "#bbb" }}>
-                  {account.phone}
+              <div style={{ fontSize: 14 }}>
+                <strong>{displayLabel}</strong>
+              </div>
+              <div style={{ fontSize: 13 }}>
+                <span style={{ marginRight: 10 }}>
+                  ${balance.toFixed(2)}
                 </span>
-              )}
+                <span style={{ opacity: 0.6 }}>
+                  {openAccount === account.phone ? "▲" : "▼"}
+                </span>
+              </div>
             </div>
-            <div style={{ marginTop: 5 }}>
-              <button
-                onClick={() => {
-                  const statementLines = [];
+            {openAccount === account.phone && (
+              <div style={{ padding: "10px 12px" }}>
+                <div style={{ marginTop: 5 }}>
+                  <button
+                    onClick={() => {
+                      const statementLines = [];
 
-                  statementLines.push("CREDIT STATEMENT");
-                  statementLines.push("----------------------------");
-                  statementLines.push("Phone: " + account.phone);
-                  statementLines.push("");
+                      statementLines.push("CREDIT STATEMENT");
+                      statementLines.push("----------------------------");
+                      statementLines.push("Phone: " + account.phone);
+                      statementLines.push("");
 
-                  statementLines.push("SALES:");
-                  account.sales.forEach((sale) => {
-                    statementLines.push(
-                      `${sale.date}  |  Total: $${sale.total.toFixed(2)}`
-                    );
-
-                    if (sale.items && sale.items.length > 0) {
-                      sale.items.forEach((item: any) => {
+                      statementLines.push("SALES:");
+                      account.sales.forEach((sale) => {
                         statementLines.push(
-                          `   - ${item.name} x${item.quantity} = $${(
-                            item.price * item.quantity
-                          ).toFixed(2)}`
+                          `${sale.date}  |  Total: $${sale.total.toFixed(2)}`
+                        );
+
+                        if (sale.items && sale.items.length > 0) {
+                          sale.items.forEach((item: any) => {
+                            statementLines.push(
+                              `   - ${item.name} x${item.quantity} = $${(
+                                item.price * item.quantity
+                              ).toFixed(2)}`
+                            );
+                          });
+                        }
+
+                        statementLines.push("");
+                      });
+
+                      statementLines.push("");
+                      statementLines.push("MANUAL CREDITS:");
+                      (account.manualCredits || []).forEach((c) => {
+                        statementLines.push(
+                          `${c.date}  |  $${c.amount.toFixed(2)}  |  ${c.note}`
                         );
                       });
-                    }
 
-                    statementLines.push("");
-                  });
+                      statementLines.push("");
+                      statementLines.push("PAYMENTS:");
+                      payments
+                        .filter((p) => p.phone === account.phone)
+                        .forEach((p, i) => {
+                          const time = p.created_at
+                            ? new Date(p.created_at).toLocaleString()
+                            : "";
 
-                  statementLines.push("");
-                  statementLines.push("MANUAL CREDITS:");
-                  (account.manualCredits || []).forEach((c) => {
-                    statementLines.push(
-                      `${c.date}  |  $${c.amount.toFixed(2)}  |  ${c.note}`
-                    );
-                  });
+                          statementLines.push(
+                            `Payment ${i + 1}  |  $${Number(p.amount).toFixed(2)}  |  ${time}`
+                          );
+                        });
 
-                  statementLines.push("");
-                  statementLines.push("PAYMENTS:");
-                  payments
-                    .filter((p) => p.phone === account.phone)
-                    .forEach((p, i) => {
+                      statementLines.push("");
                       statementLines.push(
-                        `Payment ${i + 1}  |  $${Number(p.amount).toFixed(2)}`
+                        "TOTAL OWED: $" + totalOwed.toFixed(2)
                       );
-                    });
+                      statementLines.push(
+                        "TOTAL PAID: $" + totalPaid.toFixed(2)
+                      );
+                      statementLines.push(
+                        "BALANCE: $" + balance.toFixed(2)
+                      );
 
-                  statementLines.push("");
-                  statementLines.push(
-                    "TOTAL OWED: $" + totalOwed.toFixed(2)
-                  );
-                  statementLines.push(
-                    "TOTAL PAID: $" + totalPaid.toFixed(2)
-                  );
-                  statementLines.push(
-                    "BALANCE: $" + balance.toFixed(2)
-                  );
+                      const text = statementLines.join("\n");
 
-                  const text = statementLines.join("\n");
+                      const newWindow = window.open("", "_blank");
+                      if (!newWindow) return;
 
-                  const newWindow = window.open("", "_blank");
-                  if (!newWindow) return;
+                      newWindow.document.write(`
+                        <html>
+                          <body style="background:white;font-family:monospace;padding:20px;white-space:pre;">
+                            ${text}
+                          </body>
+                        </html>
+                      `);
+                      newWindow.document.close();
+                    }}
+                    style={{ marginRight: 10 }}
+                  >
+                    Statement
+                  </button>
+                </div>
+                {openAccount === account.phone && (
+                  <div style={{ marginTop: 6, fontSize: 13 }}>
+                    Owed: ${totalOwed.toFixed(2)} | Paid: ${totalPaid.toFixed(2)} | Balance: ${balance.toFixed(2)}
+                  </div>
+                )}
+                {/* Add Payment */}
+                <input
+                  placeholder="Payment & Enter"
+                  type="number"
+                  style={{
+                    marginTop: 5,
+                    backgroundColor: "white",
+                    color: "black",
+                    padding: 6,
+                    borderRadius: 4,
+                    border: "1px solid #ccc"
+                  }}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter") {
+                      const value = parseFloat(
+                        (e.target as HTMLInputElement).value
+                      );
+                      if (!value) return;
 
-                  newWindow.document.write(`
-                    <html>
-                      <body style="background:white;font-family:monospace;padding:20px;white-space:pre;">
-                        ${text}
-                      </body>
-                    </html>
-                  `);
-                  newWindow.document.close();
-                }}
-                style={{ marginRight: 10 }}
-              >
-                Statement
-              </button>
-            </div>
-            <div style={{ marginTop: 6 }}>
-              Owed: ${totalOwed.toFixed(2)} | Paid: ${totalPaid.toFixed(2)} | Balance: ${balance.toFixed(2)}
-            </div>
+                      // Insert into DB
+                      const { error } = await supabase
+                        .from("credit_payments2")
+                        .insert({
+                          phone: account.phone,
+                          amount: value,
+                        });
 
-            {/* Add Payment */}
-            <input
-              placeholder="Payment & Enter"
-              type="number"
-              style={{
-                marginTop: 5,
-                backgroundColor: "white",
-                color: "black",
-                padding: 6,
-                borderRadius: 4,
-                border: "1px solid #ccc"
-              }}
-              onKeyDown={async (e) => {
-                if (e.key === "Enter") {
-                  const value = parseFloat(
-                    (e.target as HTMLInputElement).value
-                  );
-                  if (!value) return;
+                      if (error) {
+                        console.error(error);
+                        return;
+                      }
 
-                  // Insert into DB
-                  const { error } = await supabase
-                    .from("credit_payments2")
-                    .insert({
-                      phone: account.phone,
-                      amount: value,
-                    });
+                      setPayments((prev) => [
+                        ...prev,
+                        {
+                          phone: account.phone,
+                          amount: value,
+                          created_at: new Date().toISOString(),
+                        },
+                      ]);
 
-                  if (error) {
-                    console.error(error);
-                    return;
-                  }
-
-                  setPayments((prev) => [
-                    ...prev,
-                    { phone: account.phone, amount: value },
-                  ]);
-
-                  (e.target as HTMLInputElement).value = "";
-                }
-              }}
-            />
+                      (e.target as HTMLInputElement).value = "";
+                    }
+                  }}
+                />
+              </div>
+            )}
           </div>
         );
       })}

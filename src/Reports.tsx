@@ -16,6 +16,7 @@ type Sale = {
   total: number;
   profit: number;
   date: string;
+  created_at?: string;
   type: "cash" | "credit" | "shs";
   shsAmount?: number;
   customer?: string;
@@ -33,7 +34,7 @@ export default function Reports() {
   const [sales, setSales] = useState<Sale[]>([]);
   const [credits, setCredits] = useState<CreditAccount[]>([]);
   const [payments, setPayments] = useState<
-    { phone: string; amount: number }[]
+    { phone: string; amount: number; created_at?: string }[]
   >([]);
 
   useEffect(() => {
@@ -49,14 +50,19 @@ export default function Reports() {
 
       const { data: paymentsData } = await supabase
         .from("credit_payments2")
-        .select("phone, amount");
+        .select("phone, amount, created_at");
 
       if (salesData) {
         setSales(
           salesData.map((s: any) => ({
             ...s,
-            items: s.items || [],
+            items: s.items
+              ? typeof s.items === "string"
+                ? JSON.parse(s.items)
+                : s.items
+              : [],
             shsAmount: s.shs_amount || 0,
+            created_at: s.created_at,
           }))
         );
       }
@@ -66,24 +72,88 @@ export default function Reports() {
       }
 
       if (paymentsData) {
-        setPayments(paymentsData as any);
+        setPayments(
+          paymentsData.map((p: any) => ({
+            phone: p.phone,
+            amount: Number(p.amount),
+            created_at: p.created_at,
+          }))
+        );
       }
     };
 
     fetchData();
   }, []);
-  const totalCashSales = sales
+  const getBusinessStart = () => {
+    const now = new Date();
+    const start = new Date();
+    start.setHours(5, 0, 0, 0);
+
+    if (now.getHours() < 5) {
+      start.setDate(start.getDate() - 1);
+    }
+
+    return start;
+  };
+
+  const businessStart = getBusinessStart();
+
+  const parseSaleDate = (dateStr: string) => {
+    // Handles formats like "19/02/2026, 14:19:58"
+    if (!dateStr) return null;
+
+    const [datePart, timePart] = dateStr.split(",");
+    if (!datePart || !timePart) return null;
+
+    const [day, month, year] = datePart.trim().split("/");
+
+    return new Date(
+      Number(year),
+      Number(month) - 1,
+      Number(day),
+      ...timePart.trim().split(":").map(Number)
+    );
+  };
+
+  const filteredSales = sales.filter((sale) => {
+    let saleTime: Date | null = null;
+
+    if (sale.created_at) {
+      saleTime = new Date(sale.created_at);
+    } else {
+      saleTime = parseSaleDate(sale.date);
+    }
+
+    if (!saleTime) return false;
+
+    return saleTime >= businessStart;
+  });
+
+  const filteredPayments = payments.filter((p: any) => {
+    const paymentTime = p.created_at
+      ? new Date(p.created_at)
+      : null;
+
+    if (!paymentTime) return false;
+
+    return paymentTime >= businessStart;
+  });
+
+  const totalCashSales = filteredSales
     .filter((sale) => sale.type === "cash")
     .reduce((sum, sale) => sum + sale.total, 0);
 
-  const totalShsSales = sales
+  const totalShsSales = filteredSales
     .filter((sale) => sale.type === "shs")
     .reduce((sum, sale) => sum + (sale.shsAmount || 0), 0);
 
-
-
-  const totalProfit = sales.reduce(
+  const totalProfit = filteredSales.reduce(
     (sum, sale) => sum + sale.profit,
+    0
+  );
+
+  const totalCreditPayments = filteredPayments.reduce(
+    (sum, p) => sum + Number(p.amount),
     0
   );
 
@@ -111,10 +181,13 @@ export default function Reports() {
         <br />
         <strong>Total SHS Revenue:</strong>{" "}
         {totalShsSales.toFixed(0)} SHS
+        <br />
+        <strong>Total Credit Payments:</strong>{" "}
+        ${totalCreditPayments.toFixed(2)}
         <hr />
       </div>
 
-      {sales.map((sale) => (
+      {filteredSales.map((sale) => (
         <div key={sale.id} style={{ marginBottom: 12 }}>
           <div>
             {sale.date} ({sale.type === "shs" ? "SHS" : sale.type})
@@ -143,7 +216,7 @@ export default function Reports() {
       <hr style={{ margin: "25px 0" }} />
 
       <h4>Credit Payments</h4>
-      {payments.map((payment, idx) => {
+      {filteredPayments.map((payment, idx) => {
         const name = getCustomerName(payment.phone);
         return (
           <div

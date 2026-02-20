@@ -30,9 +30,30 @@ export default function Sales({ setSales }: Props) {
     { id: number; name: string | null; phone: number }[]
   >([]);
   const [search, setSearch] = useState("");
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [customerInput, setCustomerInput] = useState("");
-  const [lineTotals, setLineTotals] = useState<Record<string, string>>({});
+  const [cart, setCart] = useState<CartItem[]>(() => {
+    const saved = localStorage.getItem("mato_cart");
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [customerInput, setCustomerInput] = useState(() => {
+    return localStorage.getItem("mato_customer") || "";
+  });
+
+  const [lineTotals, setLineTotals] = useState<Record<string, string>>(() => {
+    const saved = localStorage.getItem("mato_line_totals");
+    return saved ? JSON.parse(saved) : {};
+  });
+  useEffect(() => {
+    localStorage.setItem("mato_cart", JSON.stringify(cart));
+  }, [cart]);
+
+  useEffect(() => {
+    localStorage.setItem("mato_customer", customerInput);
+  }, [customerInput]);
+
+  useEffect(() => {
+    localStorage.setItem("mato_line_totals", JSON.stringify(lineTotals));
+  }, [lineTotals]);
 
   useEffect(() => {
     const fetchProducts = async () => {
@@ -147,7 +168,23 @@ export default function Sales({ setSales }: Props) {
     );
   };
 
-  const total = cart.reduce((s, i) => s + i.price * i.quantity, 0);
+  const total = cart.reduce((sum, i) => {
+    const manualLine = lineTotals[i.id];
+
+    if (manualLine !== undefined && manualLine !== "") {
+      const parsed = parseFloat(manualLine);
+      if (!isNaN(parsed)) return sum + parsed;
+    }
+
+    return sum + i.price * i.quantity;
+  }, 0);
+
+  const extractCustomerValue = (input: string) => {
+    const match = input.match(/\((\d+)\)/);
+    if (match) return match[1];
+    return input.trim();
+  };
+
   const profit = cart.reduce(
     (s, i) => s + (i.price - i.cost) * i.quantity,
     0
@@ -192,7 +229,11 @@ export default function Sales({ setSales }: Props) {
 
   const cashCheckout = async () => {
     if (!cart.length) return;
-    const newSale = createSale("cash", customerInput);
+    const cleanCustomer = customerInput
+      ? extractCustomerValue(customerInput)
+      : undefined;
+
+    const newSale = createSale("cash", cleanCustomer);
     await reduceStockAndSync();
 
     await supabase.from("sales").insert({
@@ -209,6 +250,9 @@ export default function Sales({ setSales }: Props) {
     setCart([]);
     setLineTotals({});
     setCustomerInput("");
+    localStorage.removeItem("mato_cart");
+    localStorage.removeItem("mato_customer");
+    localStorage.removeItem("mato_line_totals");
     alert("Transaction complete");
   };
 
@@ -219,7 +263,43 @@ export default function Sales({ setSales }: Props) {
       return;
     }
 
-    const newSale = createSale("credit", customerInput);
+    let cleanCustomer = extractCustomerValue(customerInput);
+
+    // normalize phone (remove leading zero)
+    if (cleanCustomer.startsWith("0")) {
+      cleanCustomer = cleanCustomer.slice(1);
+    }
+
+    // ensure numeric
+    const numericPhone = Number(cleanCustomer);
+    if (isNaN(numericPhone)) {
+      alert("Customer phone must be a valid number.");
+      return;
+    }
+
+    // check if customer exists
+    const { data: existingCustomer } = await supabase
+      .from("customers")
+      .select("id")
+      .eq("phone", numericPhone)
+      .maybeSingle();
+
+    // if not exists → create customer
+    if (!existingCustomer) {
+      await supabase.from("customers").insert({
+        id: numericPhone,
+        phone: numericPhone,
+        name: null,
+      });
+
+      // refresh local customers state
+      setCustomers((prev) => [
+        ...prev,
+        { id: numericPhone, phone: numericPhone, name: null },
+      ]);
+    }
+
+    const newSale = createSale("credit", cleanCustomer);
     await reduceStockAndSync();
 
     await supabase.from("sales").insert({
@@ -227,7 +307,7 @@ export default function Sales({ setSales }: Props) {
       total: newSale.total,
       profit: newSale.profit,
       type: newSale.type,
-      customer: newSale.customer || null,
+      customer: numericPhone.toString(),
       shs_amount: null,
       items: newSale.items,
     });
@@ -236,6 +316,9 @@ export default function Sales({ setSales }: Props) {
     setCart([]);
     setLineTotals({});
     setCustomerInput("");
+    localStorage.removeItem("mato_cart");
+    localStorage.removeItem("mato_customer");
+    localStorage.removeItem("mato_line_totals");
     alert("Credit transaction complete");
   };
 
@@ -262,6 +345,9 @@ export default function Sales({ setSales }: Props) {
     setSales((p) => [...p, newSale]);
     setCart([]);
     setLineTotals({});
+    localStorage.removeItem("mato_cart");
+    localStorage.removeItem("mato_customer");
+    localStorage.removeItem("mato_line_totals");
     alert("SHS transaction complete");
   };
 
@@ -330,7 +416,34 @@ export default function Sales({ setSales }: Props) {
 
       {cart.map((i) => (
         <div key={i.id} style={{ marginBottom: 8 }}>
-          {i.name}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>{i.name}</span>
+            <span
+              onClick={() => {
+                setCart((prev) => prev.filter((item) => item.id !== i.id));
+                setLineTotals((prev) => {
+                  const copy = { ...prev };
+                  delete copy[i.id];
+                  return copy;
+                });
+              }}
+              style={{
+                color: "red",
+                cursor: "pointer",
+                fontSize: 12,
+                fontWeight: "bold",
+                paddingLeft: 8,
+              }}
+            >
+              ×
+            </span>
+          </div>
           <div style={{ display: "flex", gap: 5 }}>
             <div>
               <div style={{ fontSize: 12 }}>Qty ({i.unit})</div>
@@ -376,10 +489,22 @@ export default function Sales({ setSales }: Props) {
         <strong>Total: ${total.toFixed(2)}</strong>
       </div>
 
-      <div style={{ display: "flex", gap: 10, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 10, marginTop: 10, flexWrap: "wrap" }}>
         <button onClick={cashCheckout}>Cash</button>
         <button onClick={creditCheckout}>Credit</button>
         <button onClick={shsCheckout}>SHS</button>
+        <button
+          onClick={() => {
+            setCart([]);
+            setLineTotals({});
+            setCustomerInput("");
+            localStorage.removeItem("mato_cart");
+            localStorage.removeItem("mato_customer");
+            localStorage.removeItem("mato_line_totals");
+          }}
+        >
+          Clear
+        </button>
       </div>
     </>
   );

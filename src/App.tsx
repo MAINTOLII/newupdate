@@ -2,49 +2,13 @@ import { useState } from "react";
 import Credits from "./Credits";
 import Reports from "./Reports";
 import Sales from "./Sales";
+import Edit from "./Edit";
 import Logbook from "./Logbook.tsx";
-import type { CreditAccount } from "./types";
 
 
 function App() {
-  const [page, setPage] = useState<"sales" | "reports" | "credits" | "logbook">("sales");
-  const [credits, setCredits] = useState<CreditAccount[]>([]);
+  const [page, setPage] = useState<"sales" | "reports" | "credits" | "logbook" | "edit-items">("sales");
   const [, setSales] = useState<any[]>([]);
-
-  const addManualCredit = (phone: string, amount: number, note: string) => {
-    if (!amount) return;
-
-    const newCredit = {
-      amount,
-      note,
-      date: new Date().toLocaleString(),
-    };
-
-    setCredits((prev) => {
-      const existing = prev.find((c) => c.phone === phone);
-
-      if (existing) {
-        return prev.map((c) =>
-          c.phone === phone
-            ? {
-                ...c,
-                manualCredits: [...(c.manualCredits || []), newCredit],
-              }
-            : c
-        );
-      }
-
-      return [
-        ...prev,
-        {
-          phone,
-          sales: [],
-          payments: [],
-          manualCredits: [newCredit],
-        },
-      ];
-    });
-  };
 
   return (
     <div
@@ -72,6 +36,7 @@ function App() {
         <button onClick={() => setPage("reports")}>Reports</button>
         <button onClick={() => setPage("credits")}>Credits</button>
         <button onClick={() => setPage("logbook")}>Logbook</button>
+        <button onClick={() => setPage("edit-items")}>Edit Items</button>
       </div>
 
       {page === "sales" && (
@@ -83,14 +48,15 @@ function App() {
       )}
 
       {page === "credits" && (
-        <Credits
-          credits={credits}
-          addManualCredit={addManualCredit}
-        />
+        <Credits />
       )}
 
       {page === "logbook" && (
         <Logbook />
+      )}
+
+      {page === "edit-items" && (
+        <Edit />
       )}
     </div>
   );
