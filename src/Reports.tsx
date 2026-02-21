@@ -172,6 +172,20 @@ export default function Reports() {
     return saleWithName?.customer || null;
   };
 
+  const deleteSale = async (id: number) => {
+    const confirmDelete = window.confirm("Are you sure you want to delete this sale?");
+    if (!confirmDelete) return;
+
+    const { error } = await supabase.from("sales").delete().eq("id", id);
+
+    if (error) {
+      alert("Failed to delete sale");
+      return;
+    }
+
+    // Remove from local state instantly
+    setSales((prev) => prev.filter((s) => s.id !== id));
+  };
 
   return (
     <>
@@ -197,9 +211,25 @@ export default function Reports() {
 
       {filteredSales.map((sale) => (
         <div key={sale.id} style={{ marginBottom: 12 }}>
-          <div>
-            {sale.date} ({sale.type === "shs" ? "SHS" : sale.type})
-            {sale.customer && ` — ${sale.customer}`}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              {sale.date} ({sale.type === "shs" ? "SHS" : sale.type})
+              {sale.customer && ` — ${sale.customer}`}
+            </div>
+
+            <button
+              onClick={() => deleteSale(sale.id)}
+              style={{
+                background: "red",
+                color: "white",
+                border: "none",
+                padding: "4px 8px",
+                cursor: "pointer",
+                borderRadius: 4
+              }}
+            >
+              Delete
+            </button>
           </div>
 
           <div style={{ marginLeft: 10 }}>
